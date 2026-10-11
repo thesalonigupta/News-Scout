@@ -26,12 +26,13 @@ Click the gear icon (Project Settings) in the left sidebar and tick **Show "apps
 ## Part 2 — Configure and First Run
 
 **Step 6: Set your topics**
-Open `config.gs`. The four topic lists ship as epidemiology placeholders — replace all of them.
+Open `config.gs`. The topic lists and anchor patterns ship as epidemiology placeholders — replace all of them.
 
-- `HIGH_CONFIDENCE_TOPICS` — terms of art. Test: could a lifestyle writer use this phrase without meaning your field? If yes, it belongs one tier down.
-- `LOW_CONFIDENCE_TOPICS` — real terms that are also ordinary English.
-- `LIFESTYLE_ONLY_TOPICS` — terms a consumer desk uses in an unrelated sense. Matching one alone counts against relevance.
-- `AMBIGUOUS_TOPICS` — precise in your field, common elsewhere. Leave this short at first; you will add to it from real runs.
+- `CORE_TOPICS` — terms of art that count on their own. Test: could a lifestyle writer use this phrase without meaning your field? If yes, it belongs in a context list instead.
+- `BROAD_CONTEXT_TOPICS` — real terms that are also ordinary English. They count only if the article also mentions a `PRIMARY_ANCHORS` or `SECONDARY_ANCHORS` pattern.
+- `NARROW_CONTEXT_TOPICS` — precise in your field, common elsewhere. They need a `PRIMARY_ANCHORS` mention. Leave this short at first; you will add to it from real runs.
+- `WEAK_TOPICS` — terms that count only in a headline, or alongside a stronger match. Leave this short at first too.
+- `PRIMARY_ANCHORS` / `SECONDARY_ANCHORS` — regexes for "this article mentions my field's main subject". If your field has just one natural anchor list, leave `SECONDARY_ANCHORS` empty.
 
 Do not try to get this right on paper. Get it roughly right, then fix it from the audit output in Step 10.
 
@@ -88,8 +89,8 @@ Run `postTestMessageToSlack` and confirm a message arrives. Only then set `enabl
 
 **Nothing new on a re-run.** Expected. Dedupe checks link and title hash against what is already in the Digest.
 
-**Too much noise.** Run `testRelevanceFilterAudit` and look at what is being kept and why. Usually one term is responsible; move it to `AMBIGUOUS_TOPICS` rather than deleting it.
+**Too much noise.** Run `testRelevanceFilterAudit` and look at what is being kept and why. Usually one term is responsible; move it down a tier (or into `WEAK_TOPICS`) rather than deleting it.
 
-**Missing things you expected.** Same audit, dropped list. Usually the article used phrasing absent from your topic lists, or hit only an ambiguous term with nothing to corroborate it.
+**Missing things you expected.** Same audit, dropped list. Usually the article used phrasing absent from your topic lists, or hit a context term with no anchor mention to support it (the audit's dropped lines say which).
 
 **Slack silent but the Sheet updated.** Check `enabled` is true, run `postTestMessageToSlack` to isolate whether it is the webhook or the run, and check the Run Log's Errors column.

@@ -12,9 +12,11 @@ An academic search API only ever returns academic papers, so a loose topic list 
 
 So the filtering works differently in three ways:
 
-**Topics are tiered by confidence, not treated as one flat list.** `HIGH_CONFIDENCE_TOPICS` are terms of art — if a general outlet prints one, the article is almost certainly about your field. `LOW_CONFIDENCE_TOPICS` are real terms that are also ordinary English. `LIFESTYLE_ONLY_TOPICS` are terms that a consumer desk uses in a sense unrelated to your work; matching one alone counts *against* relevance.
+**Topics are tiered, not treated as one flat list.** `CORE_TOPICS` are terms of art — if any outlet prints one, the article is almost certainly about your field, so they count on their own. `BROAD_CONTEXT_TOPICS` are real terms that are also ordinary English ("outbreak"); they count only if the article also mentions something from your `PRIMARY_ANCHORS` or `SECONDARY_ANCHORS` lists. `NARROW_CONTEXT_TOPICS` are terms with a precise meaning in your field and an unrelated one elsewhere ("transmission"); they need a `PRIMARY_ANCHORS` mention.
 
-**Outlets are tiered too.** A tier-1 outlet covers your beat and little else, so it has already done most of the filtering — a low-confidence topic match is enough. A tier-2 general-interest outlet has to clear a higher bar. `FILTER_CONFIG` sets that bar per tier.
+**Weak terms must earn their place.** Terms listed in `WEAK_TOPICS` count only if they appear in the headline, or the article also matches a stronger term. This keeps words that show up in passing from carrying an article alone.
+
+**Outlet tier is recorded, not used for filtering.** Tier 1 (beat-specific) and tier 2 (general-interest) are both held to the same topic rules; the tier is just a column in the Digest so you can see where an article came from.
 
 **The lookback window is short and overlapping.** News has no stable identifier like a DOI, so dedupe leans on URL and a title hash, and `LOOKBACK_DAYS` is deliberately longer than the gap between runs so a skipped run does not leave a permanent hole.
 
@@ -24,7 +26,7 @@ So the filtering works differently in three ways:
 
 1. Create a new Google Sheet, open **Extensions → Apps Script**, and paste each `.gs` file into its own script file.
 2. Add `appsscript.json` via Project Settings → Show manifest file.
-3. Edit `config.gs`: replace the placeholder topic lists with your own vocabulary, and add the outlets that cover your beat under Tier 1.
+3. Edit `config.gs`: replace the placeholder topic lists and anchor patterns with your own vocabulary, and add the outlets that cover your beat under Tier 1.
 4. Run `setupDigestSheet`, then `testFetchAllOutletsWithoutWriting` to see what the feeds return before anything gets written.
 
 Slack is optional and off by default. Everything else is covered in `SETUP_GUIDE.md`.
@@ -49,7 +51,7 @@ Run `testFetchAllOutletsWithoutWriting` and `testRelevanceFilterAudit` before tr
 
 Two patterns show up within the first few runs:
 
-**A term keeps dragging in an unrelated beat.** Usually the term means something precise in your field and something ordinary elsewhere. Do not delete it — you would lose the real matches too. Move it to `AMBIGUOUS_TOPICS`, where it only counts if another topic corroborates it.
+**A term keeps dragging in an unrelated beat.** Usually the term means something precise in your field and something ordinary elsewhere. Do not delete it — you would lose the real matches too. Move it down a tier: from `CORE_TOPICS` to a context list, or from `BROAD_CONTEXT_TOPICS` to `NARROW_CONTEXT_TOPICS`, or add it to `WEAK_TOPICS` so it only counts in a headline.
 
 **A feed keeps emitting non-articles** — link roundups, podcast stubs, job boards. Add a title pattern to `OUTLET_SKIP_PATTERNS`.
 

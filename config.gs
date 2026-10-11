@@ -13,21 +13,34 @@
  * Where news differs from literature: an academic search API only returns
  * academic papers, so a loose topic list mostly costs you noise. An RSS feed
  * returns everything the outlet published, including recipes, gift guides and
- * sports. So this file splits topics by CONFIDENCE rather than treating them
- * as one flat list, and relevanceFilter.gs applies a different bar depending
- * on which tier a term came from and which tier of outlet it appeared in.
+ * sports. So this file splits topics into tiers, and relevanceFilter.gs
+ * applies a different bar depending on which tier a term came from. The
+ * rules are the same three-tier design the Literature Scout uses.
  */
 
 // ---------------------------------------------------------------------------
-// 1. NEWS TOPICS — CONFIDENCE TIERS
+// 1. NEWS TOPICS — THREE TIERS
 // ---------------------------------------------------------------------------
+// An article counts if it matches:
+//   (a) a CORE_TOPICS term on its own, or
+//   (b) a BROAD_CONTEXT_TOPICS term plus a mention of a PRIMARY or SECONDARY
+//       anchor, or
+//   (c) a NARROW_CONTEXT_TOPICS term plus a mention of a PRIMARY anchor.
+// Text checked = headline + the feed's short summary, never full article text.
 //
-// HIGH_CONFIDENCE_TOPICS: terms of art. If a general-interest outlet prints
-// one of these, the article is almost certainly about your field. These are
-// the terms that are allowed to carry an article into the Digest on their
-// own. A good test: could a lifestyle writer use this phrase without meaning
-// your field? If yes, it belongs one tier down.
-const HIGH_CONFIDENCE_TOPICS = [
+// Plain strings match case-insensitively; spaces also match hyphens, and a
+// trailing plural "s" is allowed. Use {label, pattern} for anything custom.
+//
+// Tune from real runs, not on paper: run testRelevanceFilterAudit (main.gs)
+// and add or move a term only after you have seen a real miss or a real
+// false positive. Moving a term down a tier is almost always better than
+// deleting it, which loses the real matches too.
+
+// (a) CORE_TOPICS — terms of art. If any outlet prints one, the article is
+// almost certainly about your field, so these count on their own. A good
+// test: could a lifestyle writer use this phrase without meaning your field?
+// If yes, it belongs in a context tier instead.
+const CORE_TOPICS = [
   'basic reproduction number',
   'herd immunity threshold',
   'serial interval',
@@ -38,47 +51,92 @@ const HIGH_CONFIDENCE_TOPICS = [
   'vaccine effectiveness',
   'attack rate',
   'seroprevalence',
+  // Custom regex example: {label, pattern} for anything a plain string
+  // can't express (alternate endings, exclusions, word-boundary tricks).
+  { label: 'epidemiology', pattern: /\bepidemiolog(y|ist|ists|ical)\b/i },
 ];
 
-// LOW_CONFIDENCE_TOPICS: real terms in your field that are also ordinary
-// English, or that appear constantly in coverage only loosely related to your
-// work. These count, but (depending on FILTER_CONFIG below) may need either a
-// beat-specific outlet or a second matched topic to make it through.
-const LOW_CONFIDENCE_TOPICS = [
+// (b) BROAD_CONTEXT_TOPICS — real terms in your field that are also ordinary
+// English. They count only if the article ALSO mentions something from
+// PRIMARY_ANCHORS or SECONDARY_ANCHORS below, which is what stops "outbreak
+// of violence" or "public health insurance premiums" from carrying a story.
+const BROAD_CONTEXT_TOPICS = [
   'outbreak',
   'epidemic',
+  'pandemic',
   'pandemic preparedness',
   'public health',
-  'immunity',
-  'variant',
   'quarantine',
   'vaccination rates',
+  'surveillance',
 ];
 
-// LIFESTYLE_ONLY_TOPICS: terms that a consumer or lifestyle desk uses in a
-// sense that has nothing to do with your field. Matching one of these alone
-// is treated as evidence AGAINST relevance, not for it.
-const LIFESTYLE_ONLY_TOPICS = [
-  'immune boosting',
-  'detox',
-  'superfood',
-  'wellness',
-];
-
-// AMBIGUOUS_TOPICS: terms with a precise meaning in your field and a common,
-// unrelated meaning elsewhere. These are still worth tracking, but only count
-// when another matched topic corroborates them. Add a term here the first
-// time you see it drag in an article from an unrelated beat — moving it here
-// is almost always better than deleting it, which loses the real matches too.
-const AMBIGUOUS_TOPICS = [
+// (c) NARROW_CONTEXT_TOPICS — terms with a precise meaning in your field and
+// a common, unrelated meaning elsewhere. They count only if the article also
+// mentions something from PRIMARY_ANCHORS (the stricter of the two anchor
+// lists). Add a term here the first time you see it drag in an article from
+// an unrelated beat.
+const NARROW_CONTEXT_TOPICS = [
   'transmission',   // also: car transmissions, data transmission
   'carrier',        // also: airlines, phone carriers, aircraft carriers
   'exposure',       // also: photography, finance, publicity
   'incidence',      // also: general statistical usage
+  'immunity',
+  'variant',
+  'strain',
 ];
 
-// The flat list the fetchers and the filter actually match against.
-const NEWS_TOPICS = HIGH_CONFIDENCE_TOPICS.concat(LOW_CONFIDENCE_TOPICS);
+// Terms (from any tier) that count only if they appear in the HEADLINE, or
+// the article also matches another, non-weak term. Use this for words that
+// show up in passing in lots of coverage but only carry a story when they
+// are its subject. Entries must match a term's string (or a {label, pattern}
+// term's label) exactly.
+const WEAK_TOPICS = [
+  'outbreak',
+  'epidemic',
+  'immunity',
+  'variant',
+  'strain',
+];
+
+// What counts as mentioning your field's PRIMARY subject. Used by tiers (b)
+// and (c). Regexes, so you control case-sensitivity: use a case-sensitive
+// pattern for abbreviations that would otherwise match inside other words.
+const PRIMARY_ANCHORS = [
+  /\b(virus(es)?|viral|pathogens?|bacteri(a|um|al)|infectious|infections?|infected)\b/i,
+  /\b(influenza|flu|COVID(-19)?|SARS-CoV-2|measles|polio|tuberculosis|mpox|cholera|dengue|malaria|Ebola|H5N1)\b/i,
+  /\b(disease|diseases|vaccines?|vaccinated|vaccination)\b/i,
+];
+
+// What counts as mentioning a SECONDARY subject: weaker evidence than a
+// PRIMARY anchor, but enough to support a BROAD_CONTEXT_TOPICS term. If your
+// field has only one natural anchor list, leave this empty ([]) and tier (b)
+// will simply use PRIMARY_ANCHORS.
+const SECONDARY_ANCHORS = [
+  /\b(patients?|hospitali[sz]ations?|clinics?|clinicians?)\b/i,
+  /\b(livestock|poultry|cattle|swine|zoonotic)\b/i,
+];
+
+// Short words shown after a context-tier match in the Digest's matched-topics
+// column, e.g. "outbreak (+disease)". Purely cosmetic.
+const ANCHOR_LABELS = {
+  primary: 'disease',
+  secondary: 'population',
+};
+
+// Phrases blanked out before matching because they contain a topic word
+// without being about the topic — typically an outlet's own name, which
+// appears in its headlines and summaries. Example: if "Outbreak Today" were
+// a feed you read, add /\bOutbreak Today\b/gi so its name stops matching
+// "outbreak".
+const NON_TOPIC_PHRASES = [];
+
+// Rewrites applied to headline and summary text BEFORE matching, so spelling
+// quirks in one outlet's house style match your terms. Entries are
+// {pattern, replacement}. Example: the New York Times writes "A.I.", which
+// would never match the term "ai"; this maps it to "AI":
+//   { pattern: /\bA\.I\.(?=\s|$|[^\w])/g, replacement: 'AI' },
+const TEXT_NORMALIZATIONS = [];
 
 // ---------------------------------------------------------------------------
 // 2. OUTLET-SPECIFIC EXCLUSION PATTERNS
@@ -86,50 +144,30 @@ const NEWS_TOPICS = HIGH_CONFIDENCE_TOPICS.concat(LOW_CONFIDENCE_TOPICS);
 //
 // Regexes matched against an article's TITLE. Use these for recurring
 // non-article items a feed emits — newsletters, link roundups, podcast
-// episode stubs, job boards. Ships empty; populate from what you observe.
+// episode stubs, job boards. Ships empty; populate from what you observe
+// in a real run, not in advance.
 //
-// Example:
-//   /^(the )?week in review/i,
-//   /^jobs? (board|roundup)/i,
+// Shape: { outlet: 'Exact Outlet Name', pattern: /^Sponsored:/i },
 const OUTLET_SKIP_PATTERNS = [];
 
 // ---------------------------------------------------------------------------
 // 3. FILTER CONFIGURATION
 // ---------------------------------------------------------------------------
 //
-// These five switches decide how strict the filter is. Everything rejected
-// is gone with no record, so change one at a time and compare the Run Log's
-// "Relevant After Filter" count before and after.
-const FILTER_CONFIG = {
-
-  // A HIGH_CONFIDENCE_TOPICS match alone is enough, from any outlet.
-  // Turn off only if your high-confidence list is letting noise through,
-  // which usually means a term in it belongs one tier down instead.
-  trustHighConfidence: true,
-
-  // Require two distinct matched topics rather than one. Off by default:
-  // news articles are short, and a single term of art is usually the only
-  // signal you get. Turn on if you are drowning.
-  requireMultipleMatches: false,
-
-  // Apply a looser bar to tier-1 (beat-specific) outlets, on the reasoning
-  // that an outlet covering only your beat has already done the filtering.
-  trustTier1Outlets: true,
-
-  // Minimum topic confidence required, per outlet tier. 'low' accepts a
-  // LOW_CONFIDENCE_TOPICS match; 'high' demands a HIGH_CONFIDENCE_TOPICS one.
-  tier1MinimumConfidence: 'low',
-  tier2MinimumConfidence: 'high',
-};
+// There are no switches here any more. Earlier versions had a FILTER_CONFIG
+// block, HIGH_/LOW_CONFIDENCE_TOPICS, LIFESTYLE_ONLY_TOPICS and
+// AMBIGUOUS_TOPICS, with outlet tier changing how strict the filter was.
+// The three tiers in section 1 replace all of them. Outlet tier (section 4)
+// is still recorded on each Digest row but no longer affects relevance.
 
 // ---------------------------------------------------------------------------
 // 4. OUTLETS
 // ---------------------------------------------------------------------------
 //
 // tier 1 = covers your beat and little else. tier 2 = general-interest, where
-// your subject is one of many things covered. The tier drives how strict the
-// filter is (see FILTER_CONFIG above), so put an outlet in tier 1 only if you
-// would read most of what it publishes.
+// your subject is one of many things covered. The tier is recorded on each
+// Digest row but does not change what counts as relevant, so use tier 1 for
+// outlets you would read most of, and tier 2 for the rest.
 //
 // isPaywalled does not change fetching — RSS metadata is public either way.
 // It only marks the row in the Sheet so you know before clicking.
