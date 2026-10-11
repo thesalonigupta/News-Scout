@@ -21,23 +21,48 @@
 function runNewsScout() {
   const runStartedAt = new Date();
 
-  const candidates = fetchAllOutlets(); // fetchRss.gs; per-outlet errors handled internally
-
-  const newArticles = filterToNewArticles(candidates);
-  const relevantNewArticles = filterToRelevantArticles(newArticles);
-
-  appendArticlesToDigest(relevantNewArticles);
-
-  const slackErrors = postArticlesToSlack(relevantNewArticles);
-
-  logRun({
-    startedAt: runStartedAt,
-    finishedAt: new Date(),
-    candidatesFound: candidates.length,
-    newAfterDedupe: newArticles.length,
-    relevantAfterFilter: relevantNewArticles.length,
-    errors: slackErrors,
+  const candidates = timedStep_('1. fetch outlets', function() {
+    return fetchAllOutlets(); // fetchRss.gs; per-outlet errors handled internally
   });
+  const newArticles = timedStep_('2. dedupe', function() {
+    return filterToNewArticles(candidates);
+  });
+  const relevantNewArticles = timedStep_('3. relevance filter', function() {
+    return filterToRelevantArticles(newArticles);
+  });
+  timedStep_('4. write to sheet', function() {
+    appendArticlesToDigest(relevantNewArticles);
+    return relevantNewArticles;
+  });
+  const slackErrors = timedStep_('5. post to Slack', function() {
+    return postArticlesToSlack(relevantNewArticles);
+  });
+
+  timedStep_('6. log run', function() {
+    logRun({
+      startedAt: runStartedAt,
+      finishedAt: new Date(),
+      candidatesFound: candidates.length,
+      newAfterDedupe: newArticles.length,
+      relevantAfterFilter: relevantNewArticles.length,
+      errors: slackErrors,
+    });
+  });
+}
+
+/**
+ * Logs a line before and after each step (added 2026-10-11) so a timed-out
+ * run's execution log shows which step it was stuck in: the last "START"
+ * line with no matching "done" line.
+ */
+function timedStep_(label, fn) {
+  console.log('START ' + label);
+  const started = Date.now();
+  const result = fn();
+  const seconds = ((Date.now() - started) / 1000).toFixed(1);
+  const count = Array.isArray(result) ? ' (' + result.length + ' items)' : '';
+  console.log('done  ' + label + ' in ' + seconds + 's' + count);
+  return result;
 }
 
 const RUN_LOG_HEADERS = [
@@ -116,19 +141,15 @@ function testFetchAllOutletsWithoutWriting() {
  * status is irrelevant to whether the FILTER made the right call).
  *
  * Logs one line per candidate:
- *   [KEPT] <topics> — <outlet>: <title>
- *   [dropped: no topic match] — <outlet>: <title>
- *   [dropped: only ambiguous match on "X", no corroborating topic] — <outlet>: <title>
+ *   [KEPT] <matched terms> — <outlet>: <title>
+ *   [dropped: <reason>] — <outlet>: <title>
  *
- * The point is to make false negatives visible, not just false
- * positives. NEWS_TOPICS is an OR-match cast-a-wide-net list (see
- * config.gs), so a genuine miss usually means either the article used
- * phrasing that isn't in NEWS_TOPICS at all, or it only hit an
- * AMBIGUOUS_TOPICS term with nothing else to corroborate it. Scan the
- * "dropped" lines for anything a human reader would consider relevant
- * to your field; if you find one, that's a real signal to add a term to
- * NEWS_TOPICS — same "only add after observing it in a real run" rule
- * config.gs already uses for AMBIGUOUS_TOPICS, just pointed the other way.
+ * Reasons (from relevanceFilter.gs): "no topic match", "context term(s)
+ * without a required anchor mention: ...", "only weak term(s) outside the
+ * title: ...", "outlet skip pattern". Scan the dropped lines for anything
+ * a human reader of your field would consider relevant; if you find one,
+ * add a term to the right tier in config.gs — only after observing a real
+ * miss.
  */
 function testRelevanceFilterAudit() {
   const candidates = fetchAllOutlets();
@@ -140,16 +161,8 @@ function testRelevanceFilterAudit() {
     if (result.isRelevant) {
       keptCount++;
       Logger.log('[KEPT] %s — %s: %s', result.matchedTopics.join(', '), article.outlet, article.title);
-      return;
-    }
-
-    if (result.matchedTopics.length === 0) {
-      Logger.log('[dropped: no topic match] — %s: %s', article.outlet, article.title);
     } else {
-      Logger.log(
-        '[dropped: only ambiguous match on "%s", no corroborating topic] — %s: %s',
-        result.matchedTopics.join('", "'), article.outlet, article.title
-      );
+      Logger.log('[dropped: %s] — %s: %s', result.reason, article.outlet, article.title);
     }
   });
 
